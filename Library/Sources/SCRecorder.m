@@ -17,7 +17,7 @@
     AVCaptureVideoDataOutput *_videoOutput;
     AVCaptureAudioDataOutput *_audioOutput;
     AVCaptureStillImageOutput *_photoOutput;
-    dispatch_queue_t _dispatchQueue;
+    dispatch_queue_t _capture_queue;
     BOOL _hasVideo;
     BOOL _hasAudio;
     BOOL _usingMainQueue;
@@ -32,17 +32,17 @@
     self = [super init];
     
     if (self) {
-        _dispatchQueue = dispatch_queue_create("me.corsin.SCRecorder", nil);
+        _capture_queue = dispatch_queue_create("me.corsin.SCRecorder", DISPATCH_QUEUE_SERIAL);
         
         _previewLayer = [[AVCaptureVideoPreviewLayer alloc] init];
         _previewLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
         
         _videoOutput = [[AVCaptureVideoDataOutput alloc] init];
         _videoOutput.alwaysDiscardsLateVideoFrames = NO;
-        [_videoOutput setSampleBufferDelegate:self queue:_dispatchQueue];
+        [_videoOutput setSampleBufferDelegate:self queue:_capture_queue];
         
         _audioOutput = [[AVCaptureAudioDataOutput alloc] init];
-        [_audioOutput setSampleBufferDelegate:self queue:_dispatchQueue];
+        [_audioOutput setSampleBufferDelegate:self queue:_capture_queue];
      
         _photoOutput = [[AVCaptureStillImageOutput alloc] init];
         _photoOutput.outputSettings = @{AVVideoCodecKey : AVVideoCodecJPEG};
@@ -56,6 +56,16 @@
     }
     
     return self;
+}
+
+- (void)enqueueBlockOnSessionQueue:(void(^)())block
+{
+    dispatch_async(_capture_queue, block);
+}
+
+- (void)enqueueBlockOnMainQueue:(void(^)())block
+{
+    dispatch_async(dispatch_get_main_queue(), block);
 }
 
 - (void)dealloc {
@@ -89,59 +99,75 @@
         [NSException raise:@"SCCameraException" format:@"The session is already opened"];
     }
     
-    NSError *sessionError = nil;
-    NSError *audioError = nil;
-    NSError *videoError = nil;
-    NSError *photoError = nil;
-    
-    AVCaptureSession *session = [[AVCaptureSession alloc] init];
-    _beginSessionConfigurationCount = 0;
-    _captureSession = session;
-
-    [self beginSessionConfiguration];
-    
-    if ([session canSetSessionPreset:self.sessionPreset]) {
-        session.sessionPreset = self.sessionPreset;
-    } else {
-        sessionError = [SCRecorder createError:@"Cannot set session preset"];
-    }
-    
-    _hasVideo = NO;
-    if (_videoEnabled) {
-        if ([session canAddOutput:_videoOutput]) {
-            [session addOutput:_videoOutput];
-            _hasVideo = YES;
+    [self enqueueBlockOnSessionQueue:^{
+        NSError *sessionError = nil;
+        NSError *audioError = nil;
+        NSError *videoError = nil;
+        NSError *photoError = nil;
+        
+        AVCaptureSession *session = [[AVCaptureSession alloc] init];
+        _beginSessionConfigurationCount = 0;
+        _captureSession = session;
+        
+        [self beginSessionConfiguration];
+        
+        if ([session canSetSessionPreset:self.sessionPreset]) {
+            session.sessionPreset = self.sessionPreset;
         } else {
-            videoError = [SCRecorder createError:@"Cannot add videoOutput inside the session"];
+            sessionError = [SCRecorder createError:@"Cannot set session preset"];
         }
-    }
-    
-    _hasAudio = NO;
-    if (_audioEnabled) {
-        if ([session canAddOutput:_audioOutput]) {
-            [session addOutput:_audioOutput];
-            _hasAudio = YES;
-        } else {
-            audioError = [SCRecorder createError:@"Cannot add audioOutput inside the sesssion"];
+        
+        _hasVideo = NO;
+        if (_videoEnabled) {
+            if ([session canAddOutput:_videoOutput]) {
+                [session addOutput:_videoOutput];
+                _hasVideo = YES;
+            } else {
+                videoError = [SCRecorder createError:@"Cannot add videoOutput inside the session"];
+            }
+            AVCaptureConnection *connection = [_videoOutput connectionWithMediaType:AVMediaTypeVideo];
+            if ([connection isVideoStabilizationSupported]) {
+                [connection setEnablesVideoStabilizationWhenAvailable:YES];
+            }
         }
-    }
-    if (_photoEnabled) {
-        if ([session canAddOutput:_photoOutput]) {
-            [session addOutput:_photoOutput];
-        } else {
-            photoError = [SCRecorder createError:@"Cannot add photoOutput inside the session"];
+        
+        _hasAudio = NO;
+        if (_audioEnabled) {
+            if ([session canAddOutput:_audioOutput]) {
+                [session addOutput:_audioOutput];
+                _hasAudio = YES;
+            } else {
+                audioError = [SCRecorder createError:@"Cannot add audioOutput inside the sesssion"];
+            }
         }
-    }
-    
-    _previewLayer.session = session;
-    
-    [self reconfigureInputs];
-    
-    [self commitSessionConfiguration];
-    
-    if (completionHandler != nil) {
-        completionHandler(nil, audioError, videoError, photoError);
-    }
+        if (_photoEnabled) {
+            if ([session canAddOutput:_photoOutput]) {
+                [session addOutput:_photoOutput];
+            } else {
+                photoError = [SCRecorder createError:@"Cannot add photoOutput inside the session"];
+            }
+        }
+      
+        AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+        if([device lockForConfiguration:nil]) {
+            if([device isSmoothAutoFocusSupported]) {
+                device.smoothAutoFocusEnabled = YES;
+            }
+            [device unlockForConfiguration];
+        }
+        
+        _previewLayer.session = session;
+        
+        [self reconfigureInputs];
+        
+        [self commitSessionConfiguration];
+        
+        [self enqueueBlockOnMainQueue:^{
+            if (completionHandler != nil) {
+                completionHandler(nil, audioError, videoError, photoError);
+            }
+        }];
+    }];
 }
 
 - (void)startRunningSession:(void (^)())completionHandler {
@@ -150,13 +176,14 @@
     }
     
     if (!_captureSession.isRunning) {
-        dispatch_async(_dispatchQueue, ^{
+        [self enqueueBlockOnSessionQueue:^{
             [_captureSession startRunning];
-            
-            if (completionHandler != nil) {
-                completionHandler();
-            }
-        });
+            [self enqueueBlockOnMainQueue:^{
+                if (completionHandler != nil) {
+                    completionHandler();
+                }
+            }];
+        }];
     } else {
         if (completionHandler != nil) {
             completionHandler();
@@ -165,7 +192,9 @@
 }
 
 - (void)endRunningSession {
-    [_captureSession stopRunning];
+    [self enqueueBlockOnSessionQueue:^{
+        [_captureSession stopRunning];
+    }];
 }
 
 - (void)capturePhoto:(void(^)(NSError*, UIImage*))completionHandler {
@@ -206,7 +235,7 @@
             if ([input.device hasMediaType:AVMediaTypeVideo]) {
                 [self removeVideoObservers:input.device];
             }
-
+            
         }
         for (AVCaptureOutput *output in _captureSession.outputs) {
             [_captureSession removeOutput:output];
@@ -218,9 +247,9 @@
 }
 
 - (void)record {
-    dispatch_sync(_dispatchQueue, ^{
+    [self enqueueBlockOnSessionQueue:^{
         _isRecording = YES;
-    });
+    }];
 }
 
 - (void)pause {
@@ -228,7 +257,7 @@
 }
 
 - (void)pause:(void(^)())completionHandler {
-    dispatch_sync(_dispatchQueue, ^{
+    [self enqueueBlockOnSessionQueue:^{
         _isRecording = NO;
         SCRecordSession *recordSession = _recordSession;
         
@@ -254,7 +283,7 @@
         } else {
             dispatch_handler(completionHandler);
         }
-    });
+    }];
 }
 
 + (NSError*)createError:(NSString*)errorDescription {
@@ -747,7 +776,7 @@
 
 - (void)setRecordSession:(SCRecordSession *)recordSession {
     if (_recordSession != recordSession) {
-        dispatch_sync(_dispatchQueue, ^{
+        dispatch_sync(_capture_queue, ^{
             [recordSession makeTimeOffsetDirty];
             _recordSession = recordSession;
         });
