@@ -116,6 +116,8 @@
         _beginSessionConfigurationCount = 0;
         _captureSession = session;
         
+        session.usesApplicationAudioSession = NO;
+        
         [self beginSessionConfiguration];
         
         if ([session canSetSessionPreset:self.sessionPreset]) {
