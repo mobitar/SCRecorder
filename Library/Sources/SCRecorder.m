@@ -69,7 +69,7 @@
 }
 
 - (void)dealloc {
-    [self closeSession];
+//    [self closeSession];
 }
 
 + (SCRecorder*)recorder {
@@ -100,6 +100,13 @@
     }
     
     [self enqueueBlockOnSessionQueue:^{
+        
+        // we set it to playback for the following reason:
+        // if in the video feed you begin loading a video, then you quickly enter the capture session before the video loads, then you begin to record,
+        // and midway in that video now completes loading, this causes an interruption in the capture session and halts the recording.
+        // by setting to playback with mix with others, this addresses the issue.
+        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
+        
         NSError *sessionError = nil;
         NSError *audioError = nil;
         NSError *videoError = nil;
@@ -171,29 +178,36 @@
 }
 
 - (void)startRunningSession:(void (^)())completionHandler {
-    if (_captureSession == nil) {
-        [NSException raise:@"SCCamera" format:@"Session was not opened before"];
-    }
-    
-    if (!_captureSession.isRunning) {
-        [self enqueueBlockOnSessionQueue:^{
+    [self enqueueBlockOnSessionQueue:^{
+        if (_captureSession == nil) {
+            [NSException raise:@"SCCamera" format:@"Session was not opened before"];
+        }
+        
+        if (!_captureSession.isRunning) {
             [_captureSession startRunning];
             [self enqueueBlockOnMainQueue:^{
                 if (completionHandler != nil) {
                     completionHandler();
                 }
             }];
-        }];
-    } else {
-        if (completionHandler != nil) {
-            completionHandler();
+        } else {
+            [self enqueueBlockOnMainQueue:^{
+                if (completionHandler != nil) {
+                    completionHandler();
+                }
+            }];
         }
-    }
+    }];
 }
 
 - (void)endRunningSession {
     [self enqueueBlockOnSessionQueue:^{
         [_captureSession stopRunning];
+        
+        // after we complete our usage, we set the category back to solo ambient, the default category
+        NSError *error = nil;
+        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategorySoloAmbient error:&error];
+        NSAssert(!error, nil);
     }];
 }
 
@@ -229,21 +243,23 @@
 }
 
 - (void)closeSession {
-    if (_captureSession != nil) {
-        for (AVCaptureDeviceInput *input in _captureSession.inputs) {
-            [_captureSession removeInput:input];
-            if ([input.device hasMediaType:AVMediaTypeVideo]) {
-                [self removeVideoObservers:input.device];
+    [self enqueueBlockOnSessionQueue:^{
+        if (_captureSession != nil) {
+            for (AVCaptureDeviceInput *input in _captureSession.inputs) {
+                [_captureSession removeInput:input];
+                if ([input.device hasMediaType:AVMediaTypeVideo]) {
+                    [self removeVideoObservers:input.device];
+                }
+                
+            }
+            for (AVCaptureOutput *output in _captureSession.outputs) {
+                [_captureSession removeOutput:output];
             }
             
+            _previewLayer.session = nil;
+            _captureSession = nil;
         }
-        for (AVCaptureOutput *output in _captureSession.outputs) {
-            [_captureSession removeOutput:output];
-        }
-        
-        _previewLayer.session = nil;
-        _captureSession = nil;
-    }
+    }];
 }
 
 - (void)record {
@@ -498,11 +514,13 @@
 }
 
 - (void)switchCaptureDevices {
-    if (self.device == AVCaptureDevicePositionBack) {
-        self.device = AVCaptureDevicePositionFront;
-    } else {
-        self.device = AVCaptureDevicePositionBack;
-    }
+    [self enqueueBlockOnSessionQueue:^{
+        if (self.device == AVCaptureDevicePositionBack) {
+            self.device = AVCaptureDevicePositionFront;
+        } else {
+            self.device = AVCaptureDevicePositionBack;
+        }
+    }];
 }
 
 
@@ -693,10 +711,12 @@
 }
 
 - (void)setDevice:(AVCaptureDevicePosition)device {
-    _device = device;
-    if (_captureSession != nil) {
-        [self reconfigureInputs];
-    }
+    [self enqueueBlockOnSessionQueue:^{
+        _device = device;
+        if (_captureSession != nil) {
+            [self reconfigureInputs];
+        }
+    }];
 }
 
 - (void)setFlashMode:(SCFlashMode)flashMode {
@@ -775,12 +795,12 @@
 }
 
 - (void)setRecordSession:(SCRecordSession *)recordSession {
-    if (_recordSession != recordSession) {
-        dispatch_sync(_capture_queue, ^{
+    [self enqueueBlockOnSessionQueue:^{
+        if (_recordSession != recordSession) {
             [recordSession makeTimeOffsetDirty];
             _recordSession = recordSession;
-        });
-    }
+        }
+    }];
 }
 
 - (AVCaptureFocusMode)focusMode {
