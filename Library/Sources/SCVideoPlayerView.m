@@ -47,6 +47,14 @@
 	self.playerLayer.player = nil;
 }
 
+- (instancetype)initWithFrame:(CGRect)frame
+{
+    if(self = [super initWithFrame:frame]) {
+        [self commonInit];
+    }
+    return self;
+}
+
 - (id) initWithCoder:(NSCoder *)aDecoder {
 	self = [super initWithCoder:aDecoder];
 	
