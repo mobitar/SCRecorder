@@ -592,35 +592,35 @@ const NSString *SCRecordSessionOutputUrlKey = @"OutputUrl";
         CMTime lastTimeVideo = CMSampleBufferGetPresentationTimeStamp(adjustedBuffer);
         CMTime duration = CMSampleBufferGetDuration(videoSampleBuffer);
         
-//        if (CMTIME_COMPARE_INLINE(lastTimeVideo, >=, _lastTimeVideo)) {
-            if (CMTIME_IS_INVALID(duration)) {
-                if (_videoMaxFrameRate == 0) {
-                    duration = frameDuration;
-                } else {
-                    duration = CMTimeMake(1, _videoMaxFrameRate);
-                }
+        //        if (CMTIME_COMPARE_INLINE(lastTimeVideo, >=, _lastTimeVideo)) {
+        if (CMTIME_IS_INVALID(duration)) {
+            if (_videoMaxFrameRate == 0) {
+                duration = frameDuration;
+            } else {
+                duration = CMTimeMake(1, _videoMaxFrameRate);
             }
-            
-            CMTime computedFrameDuration = duration;
-            
-            if (_videoTimeScale != 1.0) {
-                computedFrameDuration = CMTimeMultiplyByFloat64(computedFrameDuration, _videoTimeScale);
-                _timeOffset = CMTimeAdd(_timeOffset, CMTimeSubtract(duration, computedFrameDuration));
-            }
-            
-//            NSLog(@"%f - Appended video %f (%f)", CMTimeGetSeconds(lastTimeVideo), CMTimeGetSeconds(computedFrameDuration), CMTimeGetSeconds(CMTimeSubtract(lastTimeVideo, _lastTimeVideo)));
+        }
         
-            lastTimeVideo = CMTimeAdd(lastTimeVideo, computedFrameDuration);
+        CMTime computedFrameDuration = duration;
         
-            _lastTimeVideo = lastTimeVideo;
-            _lastTime = lastTimeVideo;
-            
-            [_videoInput appendSampleBuffer:adjustedBuffer];
+        if (_videoTimeScale != 1.0) {
+            computedFrameDuration = CMTimeMultiplyByFloat64(computedFrameDuration, _videoTimeScale);
+            _timeOffset = CMTimeAdd(_timeOffset, CMTimeSubtract(duration, computedFrameDuration));
+        }
         
-            _currentSegmentHasVideo = YES;
-//        } else {
-//            NSLog(@"%f - Skipped video", CMTimeGetSeconds(lastTimeVideo));
-//        }
+        //            NSLog(@"%f - Appended video %f (%f)", CMTimeGetSeconds(lastTimeVideo), CMTimeGetSeconds(computedFrameDuration), CMTimeGetSeconds(CMTimeSubtract(lastTimeVideo, _lastTimeVideo)));
+        
+        lastTimeVideo = CMTimeAdd(lastTimeVideo, computedFrameDuration);
+        
+        _lastTimeVideo = lastTimeVideo;
+        _lastTime = lastTimeVideo;
+        
+        [_videoInput appendSampleBuffer:adjustedBuffer];
+        
+        _currentSegmentHasVideo = YES;
+        //        } else {
+        //            NSLog(@"%f - Skipped video", CMTimeGetSeconds(lastTimeVideo));
+        //        }
         
         CFRelease(adjustedBuffer);
         return YES;

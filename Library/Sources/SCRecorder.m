@@ -134,6 +134,7 @@
             } else {
                 videoError = [SCRecorder createError:@"Cannot add videoOutput inside the session"];
             }
+            
             AVCaptureConnection *connection = [_videoOutput connectionWithMediaType:AVMediaTypeVideo];
             if ([connection isVideoStabilizationSupported]) {
                 [connection setEnablesVideoStabilizationWhenAvailable:YES];
